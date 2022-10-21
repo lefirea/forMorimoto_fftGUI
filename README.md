@@ -1,7 +1,9 @@
 # forMorimoto_fftGUI
 # ライブラリインストール
 requirements.txtをダウンロードし、
+
 pip install -r requirements.txt
+
 というコマンドを実行するだけ。
 
 # 実行方法
