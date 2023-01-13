@@ -1,5 +1,5 @@
 from PyQt6 import QtWidgets
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, Qt
 from PyQt6.QtGui import QFont
 from pyqtgraph import PlotWidget, plot
 import pyqtgraph as pg
@@ -18,14 +18,16 @@ class MainWindow(QtWidgets.QMainWindow):
         super(MainWindow, self).__init__(*args, **kwargs)
 
         self.chunk = 1024
-        self.fs = 16000
+        self.sr = 16000
         self.update_seconds = 50
         self.audio = pa.PyAudio()
         self.stream = self.audio.open(format=pa.paInt16,
                                       channels=1,
-                                      rate=self.fs,
+                                      rate=self.sr,
                                       input=True,
-                                      frames_per_buffer=self.chunk)
+                                      frames_per_buffer=self.chunk,
+                                      input_device_index=0  # ここを変える
+                                      )
 
         self.graphWidget = pg.PlotWidget()
         self.setCentralWidget(self.graphWidget)
@@ -38,6 +40,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timer.timeout.connect(self.updateGraph)
         self.timer.start(self.update_seconds)
 
+        self.maxPeak = 0
+        self.fp = np.array([400, 500])  # 通過域端周波数[Hz] どこからどこまで
+        self.fs = np.array([300, 600])  # 阻止域端周波数[Hz] どこ以下、どこ以上
+        self.gpass = 1  # 通過域端最大損失[dB]
+        self.gstop = 10
+
     def updateGraph(self):
         # fs, data = wavfile.read("ddo.wav")
         # # print(fs, data.dtype, data.max())
@@ -49,17 +57,25 @@ class MainWindow(QtWidgets.QMainWindow):
         # elif data.dtype == np.int32:
         #     data = (data / 2 ** 31).astype(float)
 
-        fs = self.fs
+        sr = self.sr
         data = self.getWaveFrame()
+
+        data = self.bandpass(data,
+                             self.sr,
+                             self.fp,
+                             self.fs,
+                             self.gpass,
+                             self.gstop)
 
         fft = np.fft.fft(data)
         afft = np.abs(fft)
-        freq = np.fft.fftfreq(len(afft), d=1.0 / fs)
+        freq = np.fft.fftfreq(len(afft), d=1.0 / sr)
         try:
             peaks = np.where(afft > 5)[0]
-            self.stbar.showMessage(f"{freq[peaks][0]:.1f}[Hz]")
+            self.maxPeak = max(self.maxPeak, freq[peaks][0])
+            self.stbar.showMessage(f"{freq[peaks][0]:.1f}[Hz] (max:{self.maxPeak:.1f}[Hz])")
         except:
-            self.stbar.showMessage(f"small peaks")
+            self.stbar.showMessage(f"small peaks (max:{self.maxPeak:.1f}[Hz])")
 
         self.stbar.setFont(QFont('Consolus', 15))
 
@@ -72,6 +88,19 @@ class MainWindow(QtWidgets.QMainWindow):
         ret = self.stream.read(num_frames=self.chunk, exception_on_overflow=False)
         ret = np.frombuffer(ret, dtype=np.int16) / 32768.0
         return ret
+
+    def bandpass(self, x, samplerate, fp, fs, gpass, gstop):
+        fn = samplerate / 2  # ナイキスト周波数
+        wp = fp / fn  # ナイキスト周波数で通過域端周波数を正規化
+        ws = fs / fn  # ナイキスト周波数で阻止域端周波数を正規化
+        N, Wn = signal.buttord(wp, ws, gpass, gstop)  # オーダーとバターワースの正規化周波数を計算
+        b, a = signal.butter(N, Wn, "band")  # フィルタ伝達関数の分子と分母を計算
+        y = signal.filtfilt(b, a, x)  # 信号に対してフィルタをかける
+        return y
+
+    def keyPressEvent(self, e):
+        if e.key() == Qt.Key.Key_R:
+            self.maxPeak = 0
 
 
 def main():
