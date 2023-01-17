@@ -8,6 +8,7 @@ import os
 import numpy as np
 from scipy.io import wavfile
 from scipy import signal
+from scipy.signal import hilbert
 from scipy import fftpack as ffp
 import pyaudio as pa
 
@@ -17,8 +18,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, *args, **kwargs):
         super(MainWindow, self).__init__(*args, **kwargs)
 
-        self.chunk = 1024
         self.sr = 16000
+        self.chunk = int(self.sr * 0.1)
         self.update_seconds = 50
         self.audio = pa.PyAudio()
         self.stream = self.audio.open(format=pa.paInt16,
@@ -41,8 +42,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.timer.start(self.update_seconds)
 
         self.maxPeak = 0
-        self.fp = np.array([400, 500])  # 通過域端周波数[Hz] どこからどこまで
-        self.fs = np.array([300, 600])  # 阻止域端周波数[Hz] どこ以下、どこ以上
+        self.fpeak = 440
+        self.fp = np.array([self.fpeak - 10, self.fpeak + 10])  # 通過域端周波数[Hz] どこからどこまで
+        self.fs = np.array([self.fpeak - 30, self.fpeak + 30])  # 阻止域端周波数[Hz] どこ以下、どこ以上
         self.gpass = 1  # 通過域端最大損失[dB]
         self.gstop = 10
 
@@ -67,13 +69,19 @@ class MainWindow(QtWidgets.QMainWindow):
                              self.gpass,
                              self.gstop)
 
+        z = hilbert(data)
+        instPhase = np.unwrap(np.angle(z))
+        instFreq = np.diff(instPhase) / (2 * np.pi) * self.sr
+
         fft = np.fft.fft(data)
         afft = np.abs(fft)
         freq = np.fft.fftfreq(len(afft), d=1.0 / sr)
         try:
-            peaks = np.where(afft > 5)[0]
-            self.maxPeak = max(self.maxPeak, freq[peaks][0])
-            self.stbar.showMessage(f"{freq[peaks][0]:.1f}[Hz] (max:{self.maxPeak:.1f}[Hz])")
+            # peaks = np.where(afft > 5)[0]
+            peaks = np.median(instFreq)
+            self.maxPeak = max(self.maxPeak, peaks)
+            # self.stbar.showMessage(f"{freq[peaks][0]:.1f}[Hz] (max:{self.maxPeak:.1f}[Hz])")
+            self.stbar.showMessage(f"{peaks:.1f}[Hz] (max:{self.maxPeak:.1f}[Hz])")
         except:
             self.stbar.showMessage(f"small peaks (max:{self.maxPeak:.1f}[Hz])")
 
